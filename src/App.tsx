@@ -24,24 +24,31 @@ type OperatorFilter = "all" | "hiroden" | "other";
 
 function App() {
   const [datasets, setDatasets] = useState<GtfsDataset[]>([]);
-  const [aggregatedStops, setAggregatedStops] = useState<AggregatedStop[]>([]);
+  const [enabledIds, setEnabledIds] = useState<Record<string, boolean>>({});
   const [selectedStop, setSelectedStop] = useState<AggregatedStop | null>(null);
   const [filter, setFilter] = useState<OperatorFilter>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setAggregatedStops(aggregateStops(datasets));
+  // 有効になっているデータセットのみを対象にする
+  const activeDatasets = useMemo(
+    () => datasets.filter((ds) => enabledIds[ds.id] !== false),
+    [datasets, enabledIds]
+  );
+
+  const aggregatedStops = useMemo(() => {
+    const agg = aggregateStops(activeDatasets);
     setSelectedStop(null);
-  }, [datasets]);
+    return agg;
+  }, [activeDatasets]);
 
   const timetableRows: TimetableRow[] = useMemo(() => {
-    const rows = getTimetableRows(datasets, selectedStop);
+    const rows = getTimetableRows(activeDatasets, selectedStop);
     if (filter === "all") return rows;
     return rows.filter((r) =>
       filter === "hiroden" ? r.operator === "hiroden" : r.operator === "other"
     );
-  }, [datasets, selectedStop, filter]);
+  }, [activeDatasets, selectedStop, filter]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -54,12 +61,23 @@ function App() {
         parsed.push(ds);
       }
       setDatasets((prev) => [...prev, ...parsed]);
+      setEnabledIds((prev) => {
+        const next = { ...prev };
+        parsed.forEach((ds) => {
+          if (!(ds.id in next)) next[ds.id] = true;
+        });
+        return next;
+      });
     } catch (e) {
       console.error(e);
       setError("GTFS の読み込みに失敗しました。ファイルを確認してください。");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const toggleDataset = (id: string) => {
+    setEnabledIds((prev) => ({ ...prev, [id]: prev[id] === false }));
   };
 
   return (
@@ -146,8 +164,8 @@ function App() {
         </section>
 
         <section className="flex-1 rounded-md border bg-white p-3">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div>
+          <div className="mb-2 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex-1">
               <h2 className="text-sm font-semibold">
                 選択停留所の統合時刻表（広電＋その他）
               </h2>
@@ -155,22 +173,47 @@ function App() {
                 停留所をクリックすると、便を時刻順に表示します。
               </p>
             </div>
-            <div className="flex gap-1">
-              <FilterButton
-                label="全社"
-                active={filter === "all"}
-                onClick={() => setFilter("all")}
-              />
-              <FilterButton
-                label="広電のみ"
-                active={filter === "hiroden"}
-                onClick={() => setFilter("hiroden")}
-              />
-              <FilterButton
-                label="その他のみ"
-                active={filter === "other"}
-                onClick={() => setFilter("other")}
-              />
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-1">
+                <FilterButton
+                  label="全社"
+                  active={filter === "all"}
+                  onClick={() => setFilter("all")}
+                />
+                <FilterButton
+                  label="広電のみ"
+                  active={filter === "hiroden"}
+                  onClick={() => setFilter("hiroden")}
+                />
+                <FilterButton
+                  label="その他のみ"
+                  active={filter === "other"}
+                  onClick={() => setFilter("other")}
+                />
+              </div>
+              <div className="rounded border p-2">
+                <p className="text-xs font-semibold text-slate-700">事業者ごとの表示</p>
+                <div className="mt-1 flex flex-col gap-1 text-xs text-slate-700">
+                  {datasets.length === 0 && (
+                    <span className="text-slate-500">読み込み済みファイルはありません</span>
+                  )}
+                  {datasets.map((ds) => (
+                    <label key={ds.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={enabledIds[ds.id] !== false}
+                        onChange={() => toggleDataset(ds.id)}
+                      />
+                      <span>
+                        {ds.id}{" "}
+                        <span className="text-slate-500">
+                          ({ds.isHiroden ? "広電" : "その他"})
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
           <div className="rounded-md border">
