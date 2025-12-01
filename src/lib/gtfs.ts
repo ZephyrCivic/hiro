@@ -183,6 +183,27 @@ export function aggregateStops(datasets: GtfsDataset[]): AggregatedStop[] {
       }
     });
   });
+
+  // 代表点を平均座標（重心）で補正する
+  aggregated.forEach((agg) => {
+    const coords = agg.members
+      .map((m) => {
+        const ds = datasets.find((d) => d.id === m.datasetId);
+        const s = ds?.stops.find((st) => st.stop_id === m.stopId);
+        if (!s) return null;
+        return { lat: s.stop_lat, lon: s.stop_lon };
+      })
+      .filter((c): c is { lat: number; lon: number } => !!c);
+    if (coords.length > 0) {
+      const avgLat =
+        coords.reduce((sum, c) => sum + c.lat, 0) / coords.length;
+      const avgLon =
+        coords.reduce((sum, c) => sum + c.lon, 0) / coords.length;
+      agg.lat = avgLat;
+      agg.lon = avgLon;
+    }
+  });
+
   return aggregated;
 }
 
