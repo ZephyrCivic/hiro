@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from "react-leaflet";
+import {
+  MapContainer,
+  Marker,
+  Popup,
+  Polyline,
+  TileLayer,
+  useMapEvents
+} from "react-leaflet";
 import { DivIcon, LatLngBounds, LatLngExpression, icon } from "leaflet";
 import { Button } from "./components/ui/button.tsx";
 import {
@@ -32,6 +39,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [mapBounds, setMapBounds] = useState<LatLngBounds | null>(null);
   const [zoom, setZoom] = useState<number>(11);
+  const [showStops, setShowStops] = useState(true);
+  const [showShapes, setShowShapes] = useState(false);
 
   // 有効になっているデータセットのみを対象にする
   const activeDatasets = useMemo(
@@ -72,6 +81,29 @@ function App() {
     // bounds: west,south,east,north
     return clusterIndex.getClusters(bounds as [number, number, number, number], zoom);
   }, [clusterIndex, mapBounds, zoom]);
+
+  const shapePolylines = useMemo(() => {
+    if (!showShapes) return [];
+    const lines: { id: string; coords: [number, number][]; isHiroden: boolean }[] = [];
+    activeDatasets.forEach((ds) => {
+      const group = new Map<string, { coords: [number, number][] }>();
+      ds.shapes.forEach((pt) => {
+        if (!group.has(pt.shape_id)) {
+          group.set(pt.shape_id, { coords: [] });
+        }
+        group.get(pt.shape_id)!.coords.push([pt.lat, pt.lon]);
+      });
+      group.forEach((g, shapeId) => {
+        const sorted = g.coords;
+        lines.push({
+          id: `${ds.id}-${shapeId}`,
+          coords: sorted,
+          isHiroden: ds.isHiroden
+        });
+      });
+    });
+    return lines;
+  }, [activeDatasets, showShapes]);
 
   const timetableRows: TimetableRow[] = useMemo(() => {
     const rows = getTimetableRows(activeDatasets, selectedStop);
@@ -170,56 +202,69 @@ function App() {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
               <MapWatcher onChange={(b, z) => { setMapBounds(b); setZoom(z); }} />
-              {clusters.map((feature) => {
-                const [lon, lat] = feature.geometry.coordinates;
-                const pos: LatLngExpression = [lat, lon];
-                const isCluster = (feature.properties as any).cluster;
-                if (isCluster) {
-                  const count = (feature.properties as any).point_count;
-                  const icon = createClusterIcon(count);
+              {showShapes &&
+                shapePolylines.map((line) => (
+                  <Polyline
+                    key={line.id}
+                    positions={line.coords}
+                    pathOptions={{
+                      color: line.isHiroden ? "#0f766e" : "#334155",
+                      weight: 3,
+                      opacity: 0.6
+                    }}
+                  />
+                ))}
+              {showStops &&
+                clusters.map((feature) => {
+                  const [lon, lat] = feature.geometry.coordinates;
+                  const pos: LatLngExpression = [lat, lon];
+                  const isCluster = (feature.properties as any).cluster;
+                  if (isCluster) {
+                    const count = (feature.properties as any).point_count;
+                    const icon = createClusterIcon(count);
+                    return (
+                      <Marker
+                        key={`cluster-${feature.id}`}
+                        position={pos}
+                        icon={icon}
+                        eventHandlers={{
+                          click: () => {
+                            const expansionZoom = clusterIndex.getClusterExpansionZoom(
+                              feature.id as number
+                            );
+                            setZoom(expansionZoom);
+                          }
+                        }}
+                      />
+                    );
+                  }
+                  const stopId = (feature.properties as any).stopId as string;
+                  const stop = aggregatedStops.find((s) => s.id === stopId);
+                  if (!stop) return null;
                   return (
                     <Marker
-                      key={`cluster-${feature.id}`}
+                      key={stop.id}
                       position={pos}
-                      icon={icon}
+                      icon={markerIcon}
                       eventHandlers={{
-                        click: () => {
-                          const expansionZoom = clusterIndex.getClusterExpansionZoom(
-                            feature.id as number
-                          );
-                          setZoom(expansionZoom);
-                        }
+                        click: () => setSelectedStop(stop)
                       }}
-                    />
+                    >
+                      <Popup>
+                        <div className="text-sm font-semibold">{stop.name}</div>
+                        <div className="text-xs text-slate-600">
+                          事業者数: {new Set(stop.members.map((m) => m.datasetId)).size}
+                        </div>
+                        <Button
+                          className="mt-2 w-full bg-slate-900 text-white hover:bg-slate-800"
+                          onClick={() => setSelectedStop(stop)}
+                        >
+                          時刻表を表示
+                        </Button>
+                      </Popup>
+                    </Marker>
                   );
-                }
-                const stopId = (feature.properties as any).stopId as string;
-                const stop = aggregatedStops.find((s) => s.id === stopId);
-                if (!stop) return null;
-                return (
-                  <Marker
-                    key={stop.id}
-                    position={pos}
-                    icon={markerIcon}
-                    eventHandlers={{
-                      click: () => setSelectedStop(stop)
-                    }}
-                  >
-                    <Popup>
-                      <div className="text-sm font-semibold">{stop.name}</div>
-                      <div className="text-xs text-slate-600">
-                        事業者数: {new Set(stop.members.map((m) => m.datasetId)).size}
-                      </div>
-                      <Button
-                        className="mt-2 w-full bg-slate-900 text-white hover:bg-slate-800"
-                        onClick={() => setSelectedStop(stop)}
-                      >
-                        時刻表を表示
-                      </Button>
-                    </Popup>
-                  </Marker>
-                );
-              })}
+                })}
             </MapContainer>
             {isLoading && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70 text-sm font-semibold text-slate-700">
@@ -258,9 +303,27 @@ function App() {
                   onClick={() => setFilter("other")}
                 />
               </div>
-              <div className="rounded border p-2">
+              <div className="rounded border p-2 space-y-2">
+                <p className="text-xs font-semibold text-slate-700">表示オプション</p>
+                <label className="flex items-center gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showStops}
+                    onChange={(e) => setShowStops(e.target.checked)}
+                  />
+                  バス停を表示
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showShapes}
+                    onChange={(e) => setShowShapes(e.target.checked)}
+                  />
+                  ルート（shapes.txt）を表示
+                </label>
+                <hr className="border-slate-200" />
                 <p className="text-xs font-semibold text-slate-700">事業者ごとの表示</p>
-                <div className="mt-1 flex flex-col gap-1 text-xs text-slate-700">
+                <div className="flex flex-col gap-1 text-xs text-slate-700">
                   {datasets.length === 0 && (
                     <span className="text-slate-500">読み込み済みファイルはありません</span>
                   )}

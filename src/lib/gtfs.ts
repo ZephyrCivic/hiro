@@ -36,6 +36,13 @@ export type StopTime = {
   stop_sequence: number;
 };
 
+export type ShapePoint = {
+  shape_id: string;
+  lat: number;
+  lon: number;
+  sequence: number;
+};
+
 export type GtfsDataset = {
   id: string; // ファイル名ベース
   agencies: Agency[];
@@ -43,6 +50,7 @@ export type GtfsDataset = {
   routes: Route[];
   trips: Trip[];
   stopTimes: StopTime[];
+  shapes: ShapePoint[];
   isHiroden: boolean;
 };
 
@@ -77,6 +85,7 @@ export async function parseGtfsZip(file: File): Promise<GtfsDataset> {
   const routes = await readRoutes(await text("routes.txt"));
   const trips = await readTrips(await text("trips.txt"));
   const stopTimes = await readStopTimes(await text("stop_times.txt"));
+  const shapes = await readShapes(await text("shapes.txt"));
 
   const isHiroden =
     agencies.findIndex((a) => a.agency_name.includes("広島電鉄")) >= 0;
@@ -88,6 +97,7 @@ export async function parseGtfsZip(file: File): Promise<GtfsDataset> {
     routes,
     trips,
     stopTimes,
+    shapes,
     isHiroden
   };
 }
@@ -143,6 +153,18 @@ async function readStopTimes(content: string | null): Promise<StopTime[]> {
       stop_sequence: Number(r.stop_sequence ?? "0")
     }))
     .filter((s) => !!s.trip_id && !!s.stop_id);
+}
+
+async function readShapes(content: string | null): Promise<ShapePoint[]> {
+  if (!content) return [];
+  return parseCsv(content)
+    .map((r) => ({
+      shape_id: r.shape_id ?? "",
+      lat: Number(r.shape_pt_lat),
+      lon: Number(r.shape_pt_lon),
+      sequence: Number(r.shape_pt_sequence ?? "0")
+    }))
+    .filter((s) => !!s.shape_id && !Number.isNaN(s.lat) && !Number.isNaN(s.lon));
 }
 
 export function normalizeStopName(raw: string): string {
