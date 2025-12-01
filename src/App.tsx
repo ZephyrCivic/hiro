@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
-import { LatLngExpression, icon } from "leaflet";
+import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from "react-leaflet";
+import { DivIcon, LatLngBounds, LatLngExpression, icon } from "leaflet";
 import { Button } from "./components/ui/button.tsx";
 import {
   AggregatedStop,
@@ -10,6 +10,7 @@ import {
   getTimetableRows,
   parseGtfsZip
 } from "./lib/gtfs.ts";
+import Supercluster from "supercluster";
 
 const defaultCenter: LatLngExpression = [34.3853, 132.4553]; // 広島駅付近
 
@@ -29,6 +30,8 @@ function App() {
   const [filter, setFilter] = useState<OperatorFilter>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mapBounds, setMapBounds] = useState<LatLngBounds | null>(null);
+  const [zoom, setZoom] = useState<number>(11);
 
   // 有効になっているデータセットのみを対象にする
   const activeDatasets = useMemo(
@@ -41,6 +44,34 @@ function App() {
     setSelectedStop(null);
     return agg;
   }, [activeDatasets]);
+
+  const clusterIndex = useMemo(() => {
+    const features = aggregatedStops.map((s) => ({
+      type: "Feature" as const,
+      properties: {
+        cluster: false,
+        stopId: s.id,
+        name: s.name
+      },
+      geometry: {
+        type: "Point" as const,
+        coordinates: [s.lon, s.lat]
+      }
+    }));
+    const index = new Supercluster({
+      radius: 60,
+      maxZoom: 16
+    });
+    index.load(features);
+    return index;
+  }, [aggregatedStops]);
+
+  const clusters = useMemo(() => {
+    if (!mapBounds) return [];
+    const bounds = mapBounds.toBBoxString().split(",").map(Number);
+    // bounds: west,south,east,north
+    return clusterIndex.getClusters(bounds as [number, number, number, number], zoom);
+  }, [clusterIndex, mapBounds, zoom]);
 
   const timetableRows: TimetableRow[] = useMemo(() => {
     const rows = getTimetableRows(activeDatasets, selectedStop);
@@ -94,24 +125,24 @@ function App() {
           </div>
           <div className="flex flex-col items-start gap-2 md:flex-row md:items-center">
             <label className="text-xs text-slate-600">
-              GTFS ZIP を選択（複数可）:
-              <input
-                type="file"
-                accept=".zip"
-                multiple
-                className="mt-1 block text-xs"
-                onChange={(e) => handleFiles(e.target.files)}
-              />
-            </label>
-            <Button
-              onClick={() => setDatasets([])}
-              className="bg-slate-200 text-slate-800 hover:bg-slate-300"
-            >
-              読み込みリセット
-            </Button>
-          </div>
+            GTFS ZIP を選択（複数可）:
+            <input
+              type="file"
+              accept=".zip"
+              multiple
+              className="mt-1 block text-xs"
+              onChange={(e) => handleFiles(e.target.files)}
+            />
+          </label>
+          <Button
+            onClick={() => setDatasets([])}
+            className="bg-slate-200 text-slate-800 hover:bg-slate-300"
+          >
+            読み込みリセット
+          </Button>
         </div>
-      </header>
+      </div>
+    </header>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-3 px-4 py-4 md:flex-row">
         <section className="flex-1 rounded-md border bg-white p-3">
@@ -125,34 +156,70 @@ function App() {
             GTFS ZIP を読み込むと停留所が地図に表示されます。クリックすると右側に統合時刻表が表示されます。
           </p>
           <div className="relative h-[420px] overflow-hidden rounded-md border">
-            <MapContainer center={defaultCenter} zoom={11} className="h-full w-full">
+            <MapContainer
+              center={defaultCenter}
+              zoom={11}
+              className="h-full w-full"
+              whenCreated={(map) => {
+                setMapBounds(map.getBounds());
+                setZoom(map.getZoom());
+              }}
+            >
               <TileLayer
                 attribution='&copy; <a href="http://osm.org/copyright">OSM</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              {aggregatedStops.map((stop) => (
-                <Marker
-                  key={stop.id}
-                  position={[stop.lat, stop.lon]}
-                  icon={markerIcon}
-                  eventHandlers={{
-                    click: () => setSelectedStop(stop)
-                  }}
-                >
-                  <Popup>
-                    <div className="text-sm font-semibold">{stop.name}</div>
-                    <div className="text-xs text-slate-600">
-                      事業者数: {new Set(stop.members.map((m) => m.datasetId)).size}
-                    </div>
-                    <Button
-                      className="mt-2 w-full bg-slate-900 text-white hover:bg-slate-800"
-                      onClick={() => setSelectedStop(stop)}
-                    >
-                      時刻表を表示
-                    </Button>
-                  </Popup>
-                </Marker>
-              ))}
+              <MapWatcher onChange={(b, z) => { setMapBounds(b); setZoom(z); }} />
+              {clusters.map((feature) => {
+                const [lon, lat] = feature.geometry.coordinates;
+                const pos: LatLngExpression = [lat, lon];
+                const isCluster = (feature.properties as any).cluster;
+                if (isCluster) {
+                  const count = (feature.properties as any).point_count;
+                  const icon = createClusterIcon(count);
+                  return (
+                    <Marker
+                      key={`cluster-${feature.id}`}
+                      position={pos}
+                      icon={icon}
+                      eventHandlers={{
+                        click: () => {
+                          const expansionZoom = clusterIndex.getClusterExpansionZoom(
+                            feature.id as number
+                          );
+                          setZoom(expansionZoom);
+                        }
+                      }}
+                    />
+                  );
+                }
+                const stopId = (feature.properties as any).stopId as string;
+                const stop = aggregatedStops.find((s) => s.id === stopId);
+                if (!stop) return null;
+                return (
+                  <Marker
+                    key={stop.id}
+                    position={pos}
+                    icon={markerIcon}
+                    eventHandlers={{
+                      click: () => setSelectedStop(stop)
+                    }}
+                  >
+                    <Popup>
+                      <div className="text-sm font-semibold">{stop.name}</div>
+                      <div className="text-xs text-slate-600">
+                        事業者数: {new Set(stop.members.map((m) => m.datasetId)).size}
+                      </div>
+                      <Button
+                        className="mt-2 w-full bg-slate-900 text-white hover:bg-slate-800"
+                        onClick={() => setSelectedStop(stop)}
+                      >
+                        時刻表を表示
+                      </Button>
+                    </Popup>
+                  </Marker>
+                );
+              })}
             </MapContainer>
             {isLoading && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70 text-sm font-semibold text-slate-700">
@@ -301,3 +368,41 @@ function FilterButton({
 }
 
 export default App;
+
+function MapWatcher({
+  onChange
+}: {
+  onChange: (bounds: LatLngBounds, zoom: number) => void;
+}) {
+  useMapEvents({
+    moveend: (e) => {
+      onChange(e.target.getBounds(), e.target.getZoom());
+    },
+    zoomend: (e) => {
+      onChange(e.target.getBounds(), e.target.getZoom());
+    }
+  });
+  return null;
+}
+
+function createClusterIcon(count: number) {
+  const size = count < 10 ? 28 : count < 50 ? 32 : 36;
+  return new DivIcon({
+    html: `<div style="
+      background: rgba(15,23,42,0.9);
+      color: white;
+      width: ${size}px;
+      height: ${size}px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      border: 2px solid white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    ">${count}</div>`,
+    className: "cluster-marker",
+    iconSize: [size, size]
+  });
+}
