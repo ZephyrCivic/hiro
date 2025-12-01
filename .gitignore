@@ -1,0 +1,51 @@
+# OS / ファイルシステム
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / フロントエンド（静的サイト用）
+node_modules/
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 環境変数・秘密情報
+.env
+.env.*
+!.env.example
+
+# Python / PoC スクリプト用
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# テスト・キャッシュ
+coverage/
+*.coverage
+.cache/
+.tmp/
+
+# エディタ / IDE
+.vscode/
+.idea/
+*.iml
+
+# Codex / AI ツール
+.codex/
+.codex-cache/
+
+# その他の一時ファイル
+*.log
+*.tmp
+*.swp
+
