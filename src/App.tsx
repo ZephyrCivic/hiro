@@ -521,17 +521,21 @@ function PreviewPanel({
   ).padStart(2, "0")}`;
 
   const grouped = useMemo(() => {
-    const map = new Map<string, TimetableRow[]>();
+    const map = new Map<string, { hiroden: TimetableRow[]; other: TimetableRow[] }>();
     rows.forEach((r) => {
       const hour = r.departureTime.split(":")[0] ?? "??";
-      if (!map.has(hour)) map.set(hour, []);
-      map.get(hour)!.push(r);
+      if (!map.has(hour)) map.set(hour, { hiroden: [], other: [] });
+      const bucket = map.get(hour)!;
+      if (r.operator === "hiroden") {
+        bucket.hiroden.push(r);
+      } else {
+        bucket.other.push(r);
+      }
     });
-    Array.from(map.values()).forEach((list) =>
-      list.sort(
-        (a, b) => toSeconds(a.departureTime) - toSeconds(b.departureTime)
-      )
-    );
+    Array.from(map.values()).forEach((g) => {
+      g.hiroden.sort((a, b) => toSeconds(a.departureTime) - toSeconds(b.departureTime));
+      g.other.sort((a, b) => toSeconds(a.departureTime) - toSeconds(b.departureTime));
+    });
     return Array.from(map.entries()).sort((a, b) => Number(a[0]) - Number(b[0]));
   }, [rows]);
 
@@ -574,57 +578,49 @@ function PreviewPanel({
             </div>
           </section>
           <section className="rounded-md border border-slate-200">
-            <div className="grid grid-cols-[52px_1fr] text-sm">
-              <div className="bg-slate-100 px-2 py-2 text-[11px] font-semibold text-slate-700 border-r border-slate-200">
-                時台
-              </div>
-              <div className="bg-slate-100 px-2 py-2 text-[11px] font-semibold text-slate-700">
-                発時刻 / 事業者 / 系統・路線 / 行き先
-              </div>
-              {grouped.map(([hour, hourRows]) => (
-                <Fragment key={`hour-${hour}`}>
-                  <div
-                    className="border-r border-slate-200 px-2 py-2 text-center text-xs font-semibold text-slate-800"
-                  >
-                    {hour}時台
-                  </div>
-                  <div className="border-b border-slate-200 px-0 py-0">
-                    <table className="w-full border-collapse text-[11px]">
-                      <tbody>
-                        {hourRows.map((row, idx) => (
-                          <tr
-                            key={`${hour}-${idx}`}
-                            className={row.operator === "hiroden" ? "bg-[#e0f2f1]" : "bg-[#e2e8f0]"}
-                          >
-                            <td className="px-2 py-1 w-[70px] font-semibold text-slate-900">
-                              {row.departureTime}
-                            </td>
-                            <td className="px-2 py-1 w-[90px] text-slate-800">
-                              {row.operator === "hiroden" ? "【広電】" : "【その他】"}
-                              {row.agencyName}
-                            </td>
-                            <td className="px-2 py-1 w-[120px] text-slate-800">{row.route}</td>
-                            <td className="px-2 py-1 text-slate-800">{row.headsign}</td>
-                          </tr>
-                        ))}
-                        {hourRows.length === 0 && (
-                          <tr>
-                            <td colSpan={4} className="px-2 py-2 text-center text-slate-500">
-                              便なし
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </Fragment>
-              ))}
-              {grouped.length === 0 && (
-                <div className="col-span-2 px-3 py-6 text-center text-sm text-slate-500">
-                  表示対象の便がありません（平日ダイヤ判定後の結果）。
-                </div>
-              )}
-            </div>
+            <table className="w-full border-collapse text-[11px]">
+              <thead className="bg-slate-100 text-slate-700">
+                <tr>
+                  <th className="w-[60px] border-r border-slate-200 px-2 py-2 text-left font-semibold">
+                    時刻
+                  </th>
+                  <th className="w-[200px] border-r border-slate-200 px-2 py-2 text-left font-semibold">
+                    広電（分）
+                  </th>
+                  <th className="px-2 py-2 text-left font-semibold">その他（分）</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped.map(([hour, g]) => {
+                  const hirodenMinutes = g.hiroden.map((r) => r.departureTime.split(":")[1] ?? "").join(" ");
+                  const otherMinutes = g.other.map((r) => r.departureTime.split(":")[1] ?? "").join(" ");
+                  return (
+                    <tr key={`hour-${hour}`} className="border-b border-slate-200">
+                      <td className="border-r border-slate-200 px-2 py-2 text-xs font-semibold text-slate-900">
+                        {hour}時
+                      </td>
+                      <td className="border-r border-slate-200 px-2 py-2 text-xs">
+                        <div className="flex flex-wrap gap-1">
+                          {hirodenMinutes || <span className="text-slate-400">—</span>}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-xs">
+                        <div className="flex flex-wrap gap-1">
+                          {otherMinutes || <span className="text-slate-400">—</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {grouped.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-sm text-slate-500">
+                      表示対象の便がありません（平日ダイヤ判定後の結果）。
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </section>
         </div>
       </div>
