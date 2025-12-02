@@ -24,6 +24,22 @@ body {
   min-height: calc(297mm - 30mm); /* A4 縦から余白を引いた目安 */
 }
 
+
+.modal-overlay {
+  z-index: 12000;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+/* プレビュー表示時は背面の地図を完全に隠す */
+body.modal-open .leaflet-container,
+body.modal-open .leaflet-pane,
+body.modal-open .leaflet-control {
+  display: none !important;
+  z-index: 0 !important;
+}
 @media print {
   @page {
     size: A4 portrait;

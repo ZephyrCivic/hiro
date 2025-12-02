@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   MapContainer,
   Marker,
@@ -42,6 +42,7 @@ function App() {
   const [showStops, setShowStops] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewOperator, setPreviewOperator] = useState<OperatorFilter>("all");
 
   // 有効になっているデータセットのみを対象にする
   const activeDatasets = useMemo(
@@ -109,13 +110,17 @@ function App() {
     return lines;
   }, [activeDatasets, showShapes]);
 
+  const allTimetableRows: TimetableRow[] = useMemo(
+    () => getTimetableRows(activeDatasets, selectedStop),
+    [activeDatasets, selectedStop]
+  );
+
   const timetableRows: TimetableRow[] = useMemo(() => {
-    const rows = getTimetableRows(activeDatasets, selectedStop);
-    if (filter === "all") return rows;
-    return rows.filter((r) =>
+    if (filter === "all") return allTimetableRows;
+    return allTimetableRows.filter((r) =>
       filter === "hiroden" ? r.operator === "hiroden" : r.operator === "other"
     );
-  }, [activeDatasets, selectedStop, filter]);
+  }, [allTimetableRows, filter]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -418,9 +423,14 @@ function App() {
 
       <PreviewPanel
         visible={showPreview && !!selectedStop}
-        onClose={() => setShowPreview(false)}
+        onClose={() => {
+          setShowPreview(false);
+          setPreviewOperator("all");
+        }}
         stopName={selectedStop?.name || ""}
-        rows={timetableRows}
+        rows={allTimetableRows}
+        operatorFilter={previewOperator}
+        onOperatorFilterChange={setPreviewOperator}
       />
     </div>
   );
@@ -508,21 +518,41 @@ function PreviewPanel({
   visible,
   onClose,
   stopName,
-  rows
+  rows,
+  operatorFilter,
+  onOperatorFilterChange
 }: {
   visible: boolean;
   onClose: () => void;
   stopName: string;
   rows: TimetableRow[];
+  operatorFilter: OperatorFilter;
+  onOperatorFilterChange: (op: OperatorFilter) => void;
 }) {
+  useEffect(() => {
+    if (visible) {
+      document.body.classList.add("modal-open");
+    } else {
+      document.body.classList.remove("modal-open");
+    }
+    return () => document.body.classList.remove("modal-open");
+  }, [visible]);
+
   const now = new Date();
   const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
     now.getDate()
   ).padStart(2, "0")}`;
 
+  const filteredRows = useMemo(() => {
+    if (operatorFilter === "all") return rows;
+    return rows.filter((r) =>
+      operatorFilter === "hiroden" ? r.operator === "hiroden" : r.operator === "other"
+    );
+  }, [rows, operatorFilter]);
+
   const grouped = useMemo(() => {
     const map = new Map<string, { hiroden: TimetableRow[]; other: TimetableRow[] }>();
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const hour = r.departureTime.split(":")[0] ?? "??";
       if (!map.has(hour)) map.set(hour, { hiroden: [], other: [] });
       const bucket = map.get(hour)!;
@@ -537,17 +567,82 @@ function PreviewPanel({
       g.other.sort((a, b) => toSeconds(a.departureTime) - toSeconds(b.departureTime));
     });
     return Array.from(map.entries()).sort((a, b) => Number(a[0]) - Number(b[0]));
-  }, [rows]);
+  }, [filteredRows]);
+
+  const renderMinuteGrid = (
+    items: TimetableRow[],
+    tone: "hiroden" | "other"
+  ) => {
+    const accent = tone === "hiroden" ? "#0f766e" : "#334155";
+    const soft = tone === "hiroden" ? "#ecfdf3" : "#e2e8f0";
+    const badge = tone === "hiroden" ? "広電" : "その他";
+    if (items.length === 0) {
+      return (
+        <div className="rounded border border-dashed border-slate-300 bg-white px-3 py-3 text-center text-[11px] text-slate-400">
+          なし
+        </div>
+      );
+    }
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-1.5">
+        {items.map((r, idx) => {
+          const minute = r.departureTime.split(":")[1] ?? r.departureTime;
+          return (
+            <div
+              key={`${r.departureTime}-${idx}-${tone}`}
+              className="rounded border px-2.5 py-2 shadow-sm"
+              style={{ background: soft, borderColor: `${accent}33` }}
+            >
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-base font-bold text-slate-900">{minute}</span>
+                <span
+                  className="rounded bg-white/80 px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-700"
+                  style={{ border: `1px solid ${accent}55` }}
+                >
+                  {badge}
+                </span>
+                <span className="text-[10px] text-slate-500">{r.agencyName}</span>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold text-slate-800 leading-tight">
+                {r.headsign || r.route}
+              </div>
+              <div className="text-[10px] text-slate-600 leading-tight">系統: {r.route}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 print:bg-white print:static">
-      <div className="max-h-[90vh] w-[960px] max-w-[95vw] overflow-auto rounded-md bg-white shadow-lg print:max-h-none print:w-full print:max-w-none print:shadow-none">
-        <div className="flex items-center justify-between border-b px-4 py-3 print:hidden">
-          <div>
-            <div className="text-sm font-semibold">配布時刻表プレビュー（A4縦想定）</div>
-            <div className="text-xs text-slate-500">印刷ボタンから PDF 保存または紙出力できます</div>
+    <div className="modal-overlay fixed inset-0 z-[12000] flex items-center justify-center bg-black/40 backdrop-blur-sm print:bg-white print:static">
+      <div className="max-h-[92vh] w-[1100px] max-w-[98vw] overflow-hidden rounded-lg bg-white shadow-2xl print:max-h-none print:w-full print:max-w-none print:shadow-none">
+        <div className="flex items-start justify-between border-b bg-slate-50 px-5 py-3 print:hidden">
+          <div className="space-y-1">
+            <div className="text-sm font-semibold">時刻表プレビュー（A4 縦）</div>
+            <div className="text-xs text-slate-500">印刷 / PDF 保存は右上ボタンから実行できます</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-slate-600">表示する事業者:</span>
+              {[
+                { key: "all", label: "すべて" },
+                { key: "hiroden", label: "広電のみ" },
+                { key: "other", label: "その他のみ" }
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => onOperatorFilterChange(opt.key as OperatorFilter)}
+                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                    operatorFilter === opt.key
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button className="bg-slate-900 text-white hover:bg-slate-800 text-xs px-3 py-1" onClick={() => window.print()}>
@@ -561,61 +656,55 @@ function PreviewPanel({
             </Button>
           </div>
         </div>
-        <div className="print-page px-8 py-6 text-slate-900">
-          <header className="mb-4 border-b pb-3">
-            <div className="text-lg font-bold leading-tight">{stopName}</div>
-            <div className="text-xs text-slate-600">
-              改正ラベル: 2026年春ダイヤ（例） / 運行日: 平日ダイヤ / 出力日: {formatted}
+        <div className="print-page px-8 py-6 text-slate-900 overflow-auto">
+          <header className="mb-4 overflow-hidden rounded-md border border-slate-200 shadow-sm">
+            <div className="bg-[#0b3fa4] px-4 py-2 text-base font-bold leading-tight text-white">
+              運行予定時刻表
             </div>
-          </header>
-          <section className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-1 bg-[#facc15] px-4 py-2 text-sm font-semibold text-slate-900 sm:flex-row sm:items-center sm:justify-between">
+              <span>{stopName || "停留所名不明"}</span>
+              <span className="text-xs font-normal text-slate-800">出力日: {formatted}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 bg-slate-50 px-4 py-2 text-xs text-slate-700">
               <Legend color="#0f766e" label="広電" bg="#e0f2f1" />
               <Legend color="#334155" label="その他" bg="#e2e8f0" />
+              <span className="text-slate-500">
+                備考: 分単位で表示（GTFS のカレンダー条件は未フィルタ）
+              </span>
             </div>
-            <div className="text-slate-600">
-              備考: 印刷時はブラウザの「背景のグラフィック」を有効にすると色分けが再現されます。
-            </div>
-          </section>
-          <section className="rounded-md border border-slate-200">
-            <table className="w-full border-collapse text-[11px]">
-              <thead className="bg-slate-100 text-slate-700">
-                <tr>
-                  <th className="w-[60px] border-r border-slate-200 px-2 py-2 text-left font-semibold">
-                    時刻
+          </header>
+
+          <section className="rounded-md border border-slate-200 shadow-inner">
+            <table className="w-full border-collapse text-[12px]">
+              <thead>
+                <tr className="bg-[#0b3fa4] text-white">
+                  <th className="w-[72px] px-2 py-2 text-left font-semibold tracking-wide">時</th>
+                  <th className="px-2 py-2 text-left font-semibold border-l border-white/30 bg-[#0f766e]">
+                    広電（分・行先・系統）
                   </th>
-                  <th className="w-[200px] border-r border-slate-200 px-2 py-2 text-left font-semibold">
-                    広電（分）
+                  <th className="px-2 py-2 text-left font-semibold border-l border-white/30 bg-[#7c2d12]">
+                    その他（分・行先・系統）
                   </th>
-                  <th className="px-2 py-2 text-left font-semibold">その他（分）</th>
                 </tr>
               </thead>
               <tbody>
-                {grouped.map(([hour, g]) => {
-                  const hirodenMinutes = g.hiroden.map((r) => r.departureTime.split(":")[1] ?? "").join(" ");
-                  const otherMinutes = g.other.map((r) => r.departureTime.split(":")[1] ?? "").join(" ");
-                  return (
-                    <tr key={`hour-${hour}`} className="border-b border-slate-200">
-                      <td className="border-r border-slate-200 px-2 py-2 text-xs font-semibold text-slate-900">
-                        {hour}時
-                      </td>
-                      <td className="border-r border-slate-200 px-2 py-2 text-xs">
-                        <div className="flex flex-wrap gap-1">
-                          {hirodenMinutes || <span className="text-slate-400">—</span>}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 text-xs">
-                        <div className="flex flex-wrap gap-1">
-                          {otherMinutes || <span className="text-slate-400">—</span>}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {grouped.map(([hour, g]) => (
+                  <tr key={`hour-${hour}`} className="border-b border-slate-200">
+                    <td className="bg-[#facc15] px-2 py-3 text-center text-sm font-bold text-slate-900 align-top">
+                      {hour} 時
+                    </td>
+                    <td className="bg-[#fffbeb] px-2 py-2 align-top">
+                      {renderMinuteGrid(g.hiroden, "hiroden")}
+                    </td>
+                    <td className="bg-[#f8fafc] px-2 py-2 align-top">
+                      {renderMinuteGrid(g.other, "other")}
+                    </td>
+                  </tr>
+                ))}
                 {grouped.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-3 py-6 text-center text-sm text-slate-500">
-                      表示対象の便がありません（平日ダイヤ判定後の結果）。
+                      表示対象の便がありません（GTFS の読み込み・停留所選択を確認してください）。
                     </td>
                   </tr>
                 )}
