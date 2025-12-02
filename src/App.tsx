@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   MapContainer,
   Marker,
@@ -41,6 +41,7 @@ function App() {
   const [zoom, setZoom] = useState<number>(11);
   const [showStops, setShowStops] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   // 有効になっているデータセットのみを対象にする
   const activeDatasets = useMemo(
@@ -86,15 +87,18 @@ function App() {
     if (!showShapes) return [];
     const lines: { id: string; coords: [number, number][]; isHiroden: boolean }[] = [];
     activeDatasets.forEach((ds) => {
-      const group = new Map<string, { coords: [number, number][] }>();
+      const group = new Map<string, { coords: { lat: number; lon: number; seq: number }[] }>();
       ds.shapes.forEach((pt) => {
         if (!group.has(pt.shape_id)) {
           group.set(pt.shape_id, { coords: [] });
         }
-        group.get(pt.shape_id)!.coords.push([pt.lat, pt.lon]);
+        group.get(pt.shape_id)!.coords.push({ lat: pt.lat, lon: pt.lon, seq: pt.sequence });
       });
       group.forEach((g, shapeId) => {
-        const sorted = g.coords;
+        const sorted = g.coords
+          .slice()
+          .sort((a, b) => a.seq - b.seq)
+          .map((c) => [c.lat, c.lon] as [number, number]);
         lines.push({
           id: `${ds.id}-${shapeId}`,
           coords: sorted,
@@ -145,7 +149,7 @@ function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
-      <header className="border-b bg-white">
+      <header className="border-b bg-white no-print">
         <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-lg font-semibold">
@@ -176,7 +180,7 @@ function App() {
       </div>
     </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-3 px-4 py-4 md:flex-row">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-3 px-4 py-4 md:flex-row no-print">
         <section className="flex-1 rounded-md border bg-white p-3">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-sm font-semibold">地図（バス停の全可視化）</h2>
@@ -349,11 +353,19 @@ function App() {
           <div className="rounded-md border">
             {selectedStop ? (
               <div className="overflow-hidden">
-                <div className="border-b bg-slate-50 px-3 py-2">
-                  <div className="text-sm font-semibold">{selectedStop.name}</div>
-                  <div className="text-xs text-slate-500">
-                    停留所統合キー: {selectedStop.normalizedName} / {selectedStop.members.length} stop_id
+                <div className="border-b bg-slate-50 px-3 py-2 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">{selectedStop.name}</div>
+                    <div className="text-xs text-slate-500">
+                      停留所統合キー: {selectedStop.normalizedName} / {selectedStop.members.length} stop_id
+                    </div>
                   </div>
+                  <Button
+                    onClick={() => setShowPreview(true)}
+                    className="bg-slate-900 text-white hover:bg-slate-800 text-xs px-3 py-1"
+                  >
+                    配布時刻表プレビュー
+                  </Button>
                 </div>
                 <div className="max-h-[360px] overflow-auto">
                   <table className="min-w-full text-sm">
@@ -403,6 +415,13 @@ function App() {
           </div>
         </section>
       </main>
+
+      <PreviewPanel
+        visible={showPreview && !!selectedStop}
+        onClose={() => setShowPreview(false)}
+        stopName={selectedStop?.name || ""}
+        rows={timetableRows}
+      />
     </div>
   );
 }
@@ -468,4 +487,147 @@ function createClusterIcon(count: number) {
     className: "cluster-marker",
     iconSize: [size, size]
   });
+}
+
+function toSeconds(time: string): number {
+  const [h, m, s] = time.split(":").map((v) => Number(v));
+  if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return Number.MAX_SAFE_INTEGER;
+  return h * 3600 + m * 60 + s;
+}
+
+function Legend({ color, bg, label }: { color: string; bg: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full px-3 py-1" style={{ background: bg }}>
+      <span className="h-3 w-3 rounded-full" style={{ background: color }} />
+      <span className="text-xs font-semibold text-slate-800">{label}</span>
+    </span>
+  );
+}
+
+function PreviewPanel({
+  visible,
+  onClose,
+  stopName,
+  rows
+}: {
+  visible: boolean;
+  onClose: () => void;
+  stopName: string;
+  rows: TimetableRow[];
+}) {
+  const now = new Date();
+  const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate()
+  ).padStart(2, "0")}`;
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, TimetableRow[]>();
+    rows.forEach((r) => {
+      const hour = r.departureTime.split(":")[0] ?? "??";
+      if (!map.has(hour)) map.set(hour, []);
+      map.get(hour)!.push(r);
+    });
+    Array.from(map.values()).forEach((list) =>
+      list.sort(
+        (a, b) => toSeconds(a.departureTime) - toSeconds(b.departureTime)
+      )
+    );
+    return Array.from(map.entries()).sort((a, b) => Number(a[0]) - Number(b[0]));
+  }, [rows]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 print:bg-white print:static">
+      <div className="max-h-[90vh] w-[960px] max-w-[95vw] overflow-auto rounded-md bg-white shadow-lg print:max-h-none print:w-full print:max-w-none print:shadow-none">
+        <div className="flex items-center justify-between border-b px-4 py-3 print:hidden">
+          <div>
+            <div className="text-sm font-semibold">配布時刻表プレビュー（A4縦想定）</div>
+            <div className="text-xs text-slate-500">印刷ボタンから PDF 保存または紙出力できます</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button className="bg-slate-900 text-white hover:bg-slate-800 text-xs px-3 py-1" onClick={() => window.print()}>
+              印刷 / PDF 保存
+            </Button>
+            <Button
+              onClick={onClose}
+              className="bg-white text-slate-700 hover:bg-slate-100 border text-xs px-3 py-1"
+            >
+              閉じる
+            </Button>
+          </div>
+        </div>
+        <div className="print-page px-8 py-6 text-slate-900">
+          <header className="mb-4 border-b pb-3">
+            <div className="text-lg font-bold leading-tight">{stopName}</div>
+            <div className="text-xs text-slate-600">
+              改正ラベル: 2026年春ダイヤ（例） / 運行日: 平日ダイヤ / 出力日: {formatted}
+            </div>
+          </header>
+          <section className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <Legend color="#0f766e" label="広電" bg="#e0f2f1" />
+              <Legend color="#334155" label="その他" bg="#e2e8f0" />
+            </div>
+            <div className="text-slate-600">
+              備考: 印刷時はブラウザの「背景のグラフィック」を有効にすると色分けが再現されます。
+            </div>
+          </section>
+          <section className="rounded-md border border-slate-200">
+            <div className="grid grid-cols-[52px_1fr] text-sm">
+              <div className="bg-slate-100 px-2 py-2 text-[11px] font-semibold text-slate-700 border-r border-slate-200">
+                時台
+              </div>
+              <div className="bg-slate-100 px-2 py-2 text-[11px] font-semibold text-slate-700">
+                発時刻 / 事業者 / 系統・路線 / 行き先
+              </div>
+              {grouped.map(([hour, hourRows]) => (
+                <Fragment key={`hour-${hour}`}>
+                  <div
+                    className="border-r border-slate-200 px-2 py-2 text-center text-xs font-semibold text-slate-800"
+                  >
+                    {hour}時台
+                  </div>
+                  <div className="border-b border-slate-200 px-0 py-0">
+                    <table className="w-full border-collapse text-[11px]">
+                      <tbody>
+                        {hourRows.map((row, idx) => (
+                          <tr
+                            key={`${hour}-${idx}`}
+                            className={row.operator === "hiroden" ? "bg-[#e0f2f1]" : "bg-[#e2e8f0]"}
+                          >
+                            <td className="px-2 py-1 w-[70px] font-semibold text-slate-900">
+                              {row.departureTime}
+                            </td>
+                            <td className="px-2 py-1 w-[90px] text-slate-800">
+                              {row.operator === "hiroden" ? "【広電】" : "【その他】"}
+                              {row.agencyName}
+                            </td>
+                            <td className="px-2 py-1 w-[120px] text-slate-800">{row.route}</td>
+                            <td className="px-2 py-1 text-slate-800">{row.headsign}</td>
+                          </tr>
+                        ))}
+                        {hourRows.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-2 py-2 text-center text-slate-500">
+                              便なし
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Fragment>
+              ))}
+              {grouped.length === 0 && (
+                <div className="col-span-2 px-3 py-6 text-center text-sm text-slate-500">
+                  表示対象の便がありません（平日ダイヤ判定後の結果）。
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
 }

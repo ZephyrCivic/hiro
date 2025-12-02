@@ -14,3 +14,31 @@ body {
     sans-serif;
   background-color: #f8fafc;
 }
+
+.no-print {
+  /* 印刷時に非表示にする領域（地図やヘッダなど） */
+}
+
+.print-page {
+  width: 100%;
+  min-height: calc(297mm - 30mm); /* A4 縦から余白を引いた目安 */
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  body {
+    background: white;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-page {
+    page-break-after: avoid;
+  }
+}

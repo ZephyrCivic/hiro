@@ -43,6 +43,19 @@ export type ShapePoint = {
   sequence: number;
 };
 
+export type Calendar = {
+  service_id: string;
+  monday: number;
+  tuesday: number;
+  wednesday: number;
+  thursday: number;
+  friday: number;
+  saturday: number;
+  sunday: number;
+  start_date?: string;
+  end_date?: string;
+};
+
 export type GtfsDataset = {
   id: string; // ファイル名ベース
   agencies: Agency[];
@@ -51,6 +64,8 @@ export type GtfsDataset = {
   trips: Trip[];
   stopTimes: StopTime[];
   shapes: ShapePoint[];
+  calendars: Calendar[];
+  weekdayServiceIds: Set<string>;
   isHiroden: boolean;
 };
 
@@ -86,9 +101,17 @@ export async function parseGtfsZip(file: File): Promise<GtfsDataset> {
   const trips = await readTrips(await text("trips.txt"));
   const stopTimes = await readStopTimes(await text("stop_times.txt"));
   const shapes = await readShapes(await text("shapes.txt"));
+  const calendars = await readCalendars(await text("calendar.txt"));
 
   const isHiroden =
     agencies.findIndex((a) => a.agency_name.includes("広島電鉄")) >= 0;
+  const weekdayServiceIds = new Set(
+    calendars
+      .filter((c) =>
+        [c.monday, c.tuesday, c.wednesday, c.thursday, c.friday].some((v) => v === 1)
+      )
+      .map((c) => c.service_id)
+  );
 
   return {
     id: file.name,
@@ -98,6 +121,8 @@ export async function parseGtfsZip(file: File): Promise<GtfsDataset> {
     trips,
     stopTimes,
     shapes,
+    calendars,
+    weekdayServiceIds,
     isHiroden
   };
 }
@@ -165,6 +190,22 @@ async function readShapes(content: string | null): Promise<ShapePoint[]> {
       sequence: Number(r.shape_pt_sequence ?? "0")
     }))
     .filter((s) => !!s.shape_id && !Number.isNaN(s.lat) && !Number.isNaN(s.lon));
+}
+
+async function readCalendars(content: string | null): Promise<Calendar[]> {
+  if (!content) return [];
+  return parseCsv(content).map((r) => ({
+    service_id: r.service_id ?? "",
+    monday: Number(r.monday ?? "0"),
+    tuesday: Number(r.tuesday ?? "0"),
+    wednesday: Number(r.wednesday ?? "0"),
+    thursday: Number(r.thursday ?? "0"),
+    friday: Number(r.friday ?? "0"),
+    saturday: Number(r.saturday ?? "0"),
+    sunday: Number(r.sunday ?? "0"),
+    start_date: r.start_date,
+    end_date: r.end_date
+  }));
 }
 
 export function normalizeStopName(raw: string): string {
@@ -237,6 +278,7 @@ export function getTimetableRows(
   const rows: TimetableRow[] = [];
 
   datasets.forEach((ds) => {
+    const serviceFilter = ds.weekdayServiceIds;
     const memberStopIds = aggregatedStop.members
       .filter((m) => m.datasetId === ds.id)
       .map((m) => m.stopId);
@@ -251,6 +293,7 @@ export function getTimetableRows(
       .forEach((st) => {
         const trip = tripById.get(st.trip_id);
         if (!trip) return;
+        if (serviceFilter.size > 0 && !serviceFilter.has(trip.service_id)) return;
         const route = routeById.get(trip.route_id);
         const agency = route
           ? agencyById.get(route.agency_id)
