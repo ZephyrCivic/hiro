@@ -617,8 +617,8 @@ function PreviewPanel({
   if (!visible) return null;
 
   return (
-    <div className="modal-overlay fixed inset-0 z-[12000] flex items-center justify-center bg-black/40 backdrop-blur-sm print:bg-white print:static">
-      <div className="max-h-[92vh] w-[1100px] max-w-[98vw] overflow-hidden rounded-lg bg-white shadow-2xl print:max-h-none print:w-full print:max-w-none print:shadow-none">
+    <div className="modal-overlay fixed inset-0 z-[12000] flex items-start justify-center bg-black/40 backdrop-blur-sm p-4 sm:p-6 print:bg-white print:static">
+      <div className="my-4 max-h-[92vh] w-[1100px] max-w-[98vw] overflow-auto rounded-lg bg-white shadow-2xl print:my-0 print:max-h-none print:w-full print:max-w-none print:shadow-none">
         <div className="flex items-start justify-between border-b bg-slate-50 px-5 py-3 print:hidden">
           <div className="space-y-1">
             <div className="text-sm font-semibold">時刻表プレビュー（A4 縦）</div>
